@@ -62,7 +62,7 @@ teardown() { teardown_nebula_env; }
 }
 
 @test "--team out of range exits 2" {
-  for v in 0 6 9 abc ""; do
+  for v in 0 6 9 12 ""; do
     run "$NEBULA" claude x --team "$v"
     [ "$status" -eq 2 ]
     [[ "$output" == *"--team aceita 1 a 5"* ]]
@@ -506,4 +506,57 @@ fake_teammate() {   # fake_teammate <sessão-nebula> <nome> [time]
 @test "attach with --team and --sem-time exits 2" {
   run "$NEBULA" attach p1 --team 2 --sem-time
   [ "$status" -eq 2 ]
+}
+
+# ── sub-agentes com nome ─────────────────────────────────────
+@test "--team with names asks for named teammates" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR" --team Zeus,Arthemis
+  wait_log "Crie um time de agentes com 2 sub-agentes (teammates) para esta sessão, chamados Zeus e Arthemis."
+}
+
+@test "--team with names saves them in the session state" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR" --team Zeus,Arthemis
+  [ "$(state_get p1 team_names)" = "Zeus,Arthemis" ]
+}
+
+@test "--team N does not save names" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR" --team 2
+  [ -z "$(state_get p1 team_names)" ]
+}
+
+@test "after reboot, attach recreates the saved names without searching history" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR" --team Zeus,Arthemis
+  fake_teammate p1 teammate-9          # histórico diferente: não deve ser usado
+  reboot
+  run "$NEBULA" attach p1
+  [ "$status" -eq 0 ]
+  wait_log "Esta sessão foi retomada. Recrie os sub-agentes Zeus e Arthemis com os mesmos nomes e papéis que tinham antes"
+  ! grep -q "teammate-9" "$FAKE_LOG"
+}
+
+@test "resume with new names replaces the saved ones" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR" --team Zeus,Arthemis
+  reboot
+  "$NEBULA" attach p1 --team Apolo,Hera,Atena
+  wait_log "com 3 sub-agentes (teammates) para esta sessão, chamados Apolo, Hera e Atena."
+  [ "$(state_get p1 team_names)" = "Apolo,Hera,Atena" ]
+}
+
+@test "--team names are validated" {
+  for v in "Zeus,,Hera" "Ze us" "a,b,c,d,e,f" "Zeus;rm" ","; do
+    run "$NEBULA" claude p1 "$BATS_TEST_TMPDIR" --team "$v"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--team aceita 1 a 5"* ]]
+  done
+}
+
+@test "attach --team names is validated too" {
+  run "$NEBULA" attach p1 --team "Ze us"
+  [ "$status" -eq 2 ]
+}
+
+@test "rename keeps saved team names" {
+  "$NEBULA" claude velho "$BATS_TEST_TMPDIR" --team Zeus
+  "$NEBULA" rename velho novo
+  [ "$(state_get novo team_names)" = "Zeus" ]
 }

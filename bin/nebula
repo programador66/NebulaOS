@@ -22,18 +22,19 @@ usage() {
   cat <<EOF
 ${C_BOLD}${C_GREEN}nebula${C_RESET} — sessões de agentes de IA no terminal
 
-  nebula claude <nome> [dir] [--team N]   Claude como líder; sub-agentes em painéis
+  nebula claude <nome> [dir] [--team N|nomes]  Claude como líder; sub-agentes em painéis
   nebula codex <nome> [dir]               Codex num painel (sub-agentes internos)
   nebula ls                               lista as sessões
-  nebula attach <nome> [--team N|--sem-time]  volta para uma sessão
+  nebula attach <nome> [--team N|nomes] [--sem-time]  volta para uma sessão
   nebula kill <nome>                      encerra uma sessão
   nebula rename <atual> <novo>            renomeia uma sessão
   nebula update                           atualiza o NebulaOS
   nebula help                             esta ajuda
 
   dir:       diretório do projeto (padrão: o atual)
-  --team N:   pede ao Claude para já criar N sub-agentes (1 a 5)
-  --sem-time: ao retomar depois de um reboot, não pede para recriar os sub-agentes
+  --team N:      pede ao Claude para já criar N sub-agentes (1 a 5)
+  --team A,B:    sub-agentes com esses nomes (1 a 5); a sessão lembra os nomes
+  --sem-time:    ao retomar depois de um reboot, não pede para recriar os sub-agentes
 EOF
 }
 
@@ -73,9 +74,28 @@ require_agent() {
 
 TEAM_PROMPT='Crie um time de agentes com N sub-agentes (teammates) para esta sessão. Não comece nenhuma tarefa: apenas crie o time e aguarde minhas instruções.'
 
+# TEAM: "0" (nenhum), "N" (1 a 5) ou "A,B,C" (1 a 5 nomes)
+valid_team() {
+  if [[ "$1" =~ ^[0-9]+$ ]]; then [[ "$1" =~ ^[1-5]$ ]]; return; fi
+  [[ "$1" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+){0,4}$ ]]
+}
+team_is_names() { [[ "$1" != 0 && ! "$1" =~ ^[0-9]+$ ]]; }
+
+# pedido de criação do time (vazio se TEAM=0)
+team_prompt() {
+  local team="$1" names
+  if [[ "$team" =~ ^[1-5]$ ]]; then
+    printf '%s' "${TEAM_PROMPT/N/$team}"
+  elif team_is_names "$team"; then
+    IFS=, read -r -a names <<<"$team"
+    printf 'Crie um time de agentes com %s sub-agentes (teammates) para esta sessão, chamados %s. Não comece nenhuma tarefa: apenas crie o time e aguarde minhas instruções.' \
+      "${#names[@]}" "$(join_names "${names[@]}")"
+  fi
+}
+
 # linha de comando (sh) do painel líder
 # leader_cmd AGENT TEAM [new|resume ID [PROMPT]]
-# TEAM > 0 manda o pedido genérico de time; senão, PROMPT (se houver) vai como mensagem inicial
+# TEAM != 0 manda o pedido de criação do time; senão, PROMPT (se houver) vai como mensagem inicial
 leader_cmd() {
   local agent="$1" team="$2" mode="${3:-}" id="${4:-}" prompt="${5:-}" cmd
   case "$agent" in
@@ -85,8 +105,8 @@ leader_cmd() {
         new)    cmd+=" --session-id $id" ;;
         resume) cmd+=" --resume $id" ;;
       esac
-      if ((team > 0)); then
-        cmd+=" $(printf '%q' "${TEAM_PROMPT/N/$team}")"
+      if [[ "$team" != 0 ]]; then
+        cmd+=" $(printf '%q' "$(team_prompt "$team")")"
       elif [[ -n "$prompt" ]]; then
         cmd+=" $(printf '%q' "$prompt")"
       fi
@@ -120,10 +140,11 @@ state_dir() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/nebula"; }
 state_file() { printf '%s/%s' "$(state_dir)" "$1"; }
 state_get() { [[ -f "$(state_file "$1")" ]] && sed -n "s/^$2=//p" "$(state_file "$1")" | head -1; }
 
-state_save() {
-  local name="$1" agent="$2" dir="$3" id="$4"
+state_save() {   # state_save NOME AGENTE DIR ID [NOMES_DO_TIME]
+  local name="$1" agent="$2" dir="$3" id="$4" team_names="${5:-}"
   mkdir -p "$(state_dir)"
-  printf 'agent=%s\ndir=%s\nclaude_session=%s\n' "$agent" "$dir" "$id" > "$(state_file "$name")"
+  printf 'agent=%s\ndir=%s\nclaude_session=%s\nteam_names=%s\n' "$agent" "$dir" "$id" "$team_names" \
+    > "$(state_file "$name")"
 }
 
 # ── sub-agentes anteriores (para recriar na retomada) ────────
@@ -151,6 +172,10 @@ join_names() {
     fi
   done
   printf '%s' "$out"
+}
+
+restore_known_prompt() {
+  printf 'Esta sessão foi retomada. Recrie os sub-agentes %s com os mesmos nomes e papéis que tinham antes, e passe a cada um o contexto do que já foi feito e do que falta. Depois aguarde minhas instruções.' "$(join_names "$@")"
 }
 
 restore_prompt() {
@@ -194,26 +219,39 @@ cmd_open() {
     old_dir="$(state_get "$name" dir)"
     [[ -d "$old_dir" ]] || old_dir="$dir"
     info "retomando a conversa anterior de '$name' em $old_dir"
-    local prompt="" mates=()
-    if ((team == 0)) && [[ "${NEBULA_SEM_TIME:-}" != 1 ]]; then
-      mapfile -t mates < <(previous_teammates "$old_dir" "$id")
-      if ((${#mates[@]})); then
-        prompt="$(restore_prompt "${mates[@]}")"
-        info "pedindo ao líder para recriar os sub-agentes ativos (anteriores: $(join_names "${mates[@]}"))"
+    local prompt="" mates=() saved
+    saved="$(state_get "$name" team_names)"
+    if team_is_names "$team"; then
+      saved="$team"                      # nomes novos substituem os gravados
+    elif [[ "$team" == 0 && "${NEBULA_SEM_TIME:-}" != 1 ]]; then
+      if [[ -n "$saved" ]]; then
+        IFS=, read -r -a mates <<<"$saved"
+        prompt="$(restore_known_prompt "${mates[@]}")"
+        info "pedindo ao líder para recriar os sub-agentes: $(join_names "${mates[@]}")"
+      else
+        mapfile -t mates < <(previous_teammates "$old_dir" "$id")
+        if ((${#mates[@]})); then
+          prompt="$(restore_prompt "${mates[@]}")"
+          info "pedindo ao líder para recriar os sub-agentes ativos (anteriores: $(join_names "${mates[@]}"))"
+        fi
       fi
     fi
-    if ! start_session claude "$name" "$old_dir" "$(leader_cmd claude "$team" resume "$id" "$prompt")"; then
+    if start_session claude "$name" "$old_dir" "$(leader_cmd claude "$team" resume "$id" "$prompt")"; then
+      state_save "$name" claude "$old_dir" "$id" "$saved"
+    else
       warn "não encontrei a conversa anterior; começando uma nova" >&2
       id="$(new_uuid)"
+      [[ "$team" == 0 && -n "$saved" && "${NEBULA_SEM_TIME:-}" != 1 ]] && team="$saved"
       start_session claude "$name" "$old_dir" "$(leader_cmd claude "$team" new "$id")" \
         || agent_died claude "$old_dir"
-      state_save "$name" claude "$old_dir" "$id"
+      state_save "$name" claude "$old_dir" "$id" "$saved"
     fi
   elif [[ "$agent" == claude ]]; then
     id="$(new_uuid)"
     start_session claude "$name" "$dir" "$(leader_cmd claude "$team" new "$id")" \
       || agent_died claude "$dir"
-    state_save "$name" claude "$dir" "$id"
+    team_is_names "$team" || team=""
+    state_save "$name" claude "$dir" "$id" "$team"
   else
     start_session "$agent" "$name" "$dir" "$(leader_cmd "$agent" "$team")" \
       || agent_died "$agent" "$dir"
@@ -252,7 +290,7 @@ parse_open() {
   fi
   if ((have_team)); then
     [[ "$agent" == claude ]] || die_usage "--team só vale para claude"
-    [[ "$team" =~ ^[1-5]$ ]] || die_usage "--team aceita 1 a 5"
+    valid_team "$team" || die_usage "--team aceita 1 a 5, ou de 1 a 5 nomes separados por vírgula (letras, números, _ e -)"
   fi
 
   require_tmux
@@ -319,7 +357,7 @@ cmd_attach() {
   [[ -n "$name" ]] || die_usage "falta o nome da sessão"
   if ((have_team)); then
     [[ "${NEBULA_SEM_TIME:-}" != 1 ]] || die_usage "use --team ou --sem-time, não os dois"
-    [[ "$team" =~ ^[1-5]$ ]] || die_usage "--team aceita 1 a 5"
+    valid_team "$team" || die_usage "--team aceita 1 a 5, ou de 1 a 5 nomes separados por vírgula (letras, números, _ e -)"
   fi
   require_tmux
   if ! tm has-session -t "=$name:" 2>/dev/null && [[ "$(state_get "$name" agent)" == claude ]]; then

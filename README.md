@@ -50,10 +50,10 @@ cd NebulaOS
 
 | Comando | O que faz |
 |---|---|
-| `nebula claude <nome> [dir] [--team N]` | abre (ou retoma) a sessão `<nome>` em `dir` (padrão: o diretório atual) com o Claude como líder |
+| `nebula claude <nome> [dir] [--team N\|nomes]` | abre (ou retoma) a sessão `<nome>` em `dir` (padrão: o diretório atual) com o Claude como líder |
 | `nebula codex <nome> [dir]` | igual, com o Codex num painel |
 | `nebula ls` | lista as sessões (inclusive as paradas depois de um reboot) |
-| `nebula attach <nome> [--team N\|--sem-time]` | volta para uma sessão (depois de fechar a janela, por exemplo); depois de um reboot, as opções valem como no `nebula claude` |
+| `nebula attach <nome> [--team N\|nomes] [--sem-time]` | volta para uma sessão (depois de fechar a janela, por exemplo); depois de um reboot, as opções valem como no `nebula claude` |
 | `nebula kill <nome>` | encerra a sessão e os sub-agentes |
 | `nebula rename <atual> <novo>` | renomeia uma sessão (inclusive o título do líder e o nome da janela) |
 | `nebula update` | `git pull` + reaplica dotfiles e pós-instalação |
@@ -65,7 +65,8 @@ O `nebula claude` liga o recurso experimental
 `~/.claude/settings.json` não é alterado.
 
 1. Fale com o líder, no painel de cima. Peça o time, por exemplo: *"crie 2 sub-agentes: um
-   implementa, outro escreve testes"*. Ou já abra com `--team 2`.
+   implementa, outro escreve testes"*. Ou já abra com `--team 2`, ou com nomes:
+   `--team Zeus,Arthemis`. A sessão lembra os nomes para as próximas retomadas.
 2. O Claude abre cada sub-agente num painel novo, e o NebulaOS os organiza lado a lado embaixo.
 3. Para falar direto com um sub-agente, clique no painel dele.
 
@@ -77,11 +78,13 @@ O tmux não sobrevive a um reboot, mas a conversa com o Claude sim. Cada sessão
 - `nebula ls` mostra essas sessões como `parada (retomável)`.
 - `nebula claude <nome>` ou `nebula attach <nome>` recria a sessão **na pasta original**
   e retoma a mesma conversa (`claude --resume <id>`).
-- Os sub-agentes são recriados automaticamente: o nebula encontra no histórico do Claude os
-  nomes dos sub-agentes daquele líder e pede a ele para recriar, com os mesmos nomes e papéis,
-  os que estavam ativos no fim. Eles voltam com o contexto que o líder passa, não com a
+- Os sub-agentes são recriados automaticamente. Se a sessão foi criada com nomes
+  (`--team Zeus,Arthemis`), o líder recria exatamente esses. Senão, o nebula encontra no
+  histórico do Claude os nomes dos sub-agentes daquele líder e pede a ele para recriar, com os
+  mesmos nomes e papéis, os que estavam ativos no fim. Eles voltam com o contexto que o líder passa, não com a
   memória completa da conversa antiga.
-- `--sem-time` retoma só o líder; `--team N` pede N sub-agentes novos e genéricos.
+- `--sem-time` retoma só o líder; `--team N` pede N sub-agentes novos e genéricos;
+  `--team A,B` usa esses nomes e passa a lembrá-los.
 - Se a conversa não existir mais (por exemplo, a sessão foi criada mas nunca usada), o
   nebula avisa e começa uma nova.
 - `nebula kill <nome>` apaga esse registro. A conversa continua no histórico do Claude
