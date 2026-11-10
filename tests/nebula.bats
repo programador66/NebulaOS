@@ -416,3 +416,63 @@ reboot() { t kill-server 2>/dev/null || true; : > "$FAKE_LOG"; }
   [ ! -e "$(state velho)" ]
   [ "$(state_get novo claude_session)" = "$id" ]
 }
+
+# ── recriar os sub-agentes na retomada ───────────────────────
+# histórico falso do Claude: um arquivo por sub-agente do time do líder
+fake_teammate() {   # fake_teammate <sessão-nebula> <nome> [time]
+  local id team proj
+  id=$(state_get "$1" claude_session)
+  team="${3:-session-${id:0:8}}"
+  proj="$HOME/.claude/projects/$(printf '%s' "$BATS_TEST_TMPDIR" | sed 's/[^A-Za-z0-9]/-/g')"
+  mkdir -p "$proj"
+  printf '{"type":"user","teamName":"%s","agentName":"%s"}\n{"teamName":"%s","agentName":"%s"}\n' \
+    "$team" "$2" "$team" "$2" > "$proj/$RANDOM$RANDOM.jsonl"
+}
+
+@test "resume asks the leader to recreate previous teammates by name" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR"
+  fake_teammate p1 Zeus
+  fake_teammate p1 Arthemis
+  fake_teammate p1 Hermes session-outrotim   # de outro time: não entra
+  reboot
+  run "$NEBULA" attach p1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pedindo ao líder para recriar os sub-agentes ativos"* ]]
+  wait_log "--resume "
+  wait_log "Esta sessão foi retomada. Na sessão anterior você teve os sub-agentes "
+  wait_log "Recrie, com os mesmos nomes e papéis, apenas os que ainda estavam ativos no fim da sessão"
+  grep -q "Zeus" "$FAKE_LOG"
+  grep -q "Arthemis" "$FAKE_LOG"
+  ! grep -q "Hermes" "$FAKE_LOG"
+}
+
+@test "resume without previous teammates sends no message" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR"
+  id=$(state_get p1 claude_session)
+  reboot
+  "$NEBULA" claude p1
+  wait_log "--resume $id teams=1"
+}
+
+@test "resume with --team sends the generic prompt instead" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR"
+  fake_teammate p1 Zeus
+  reboot
+  "$NEBULA" claude p1 --team 3
+  wait_log "Crie um time de agentes com 3 sub-agentes"
+  ! grep -q "Esta sessão foi retomada" "$FAKE_LOG"
+}
+
+@test "resume with --sem-time sends no message" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR"
+  id=$(state_get p1 claude_session)
+  fake_teammate p1 Zeus
+  reboot
+  "$NEBULA" attach p1 --sem-time
+  wait_log "--resume $id teams=1"
+}
+
+@test "--team and --sem-time together exit 2" {
+  run "$NEBULA" claude p1 "$BATS_TEST_TMPDIR" --team 2 --sem-time
+  [ "$status" -eq 2 ]
+}

@@ -77,7 +77,11 @@ O tmux não sobrevive a um reboot, mas a conversa com o Claude sim. Cada sessão
 - `nebula ls` mostra essas sessões como `parada (retomável)`.
 - `nebula claude <nome>` ou `nebula attach <nome>` recria a sessão **na pasta original**
   e retoma a mesma conversa (`claude --resume <id>`).
-- Os sub-agentes não voltam sozinhos: peça de novo ao líder, ou use `--team N` ao retomar.
+- Os sub-agentes são recriados automaticamente: o nebula encontra no histórico do Claude os
+  nomes dos sub-agentes daquele líder e pede a ele para recriar, com os mesmos nomes e papéis,
+  os que estavam ativos no fim. Eles voltam com o contexto que o líder passa, não com a
+  memória completa da conversa antiga.
+- `--sem-time` retoma só o líder; `--team N` pede N sub-agentes novos e genéricos.
 - Se a conversa não existir mais (por exemplo, a sessão foi criada mas nunca usada), o
   nebula avisa e começa uma nova.
 - `nebula kill <nome>` apaga esse registro. A conversa continua no histórico do Claude
