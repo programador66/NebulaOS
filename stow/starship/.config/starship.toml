@@ -1,6 +1,6 @@
 # NebulaOS · starship — verde do Theme8 do Deepin
 add_newline = false
-format = "$env_var$directory$git_branch$git_status$character"
+format = "🪐 $env_var$directory$git_branch$git_status$character"
 
 [directory]
 style = "bold #00cd00"
