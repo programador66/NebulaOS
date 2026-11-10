@@ -8,6 +8,7 @@ _nebula() {
     'ls:lista as sessões'
     'attach:volta para uma sessão'
     'kill:encerra uma sessão'
+    'rename:renomeia uma sessão'
     'update:atualiza o NebulaOS'
     'help:ajuda'
   )
@@ -16,7 +17,8 @@ _nebula() {
     return
   fi
   case "${words[2]}" in
-    attach|kill)
+    attach|kill|rename)
+      (( CURRENT == 3 )) || return
       sessions=(${(f)"$(tmux list-sessions -F '#S' 2>/dev/null)"})
       _describe 'sessão' sessions ;;
     claude|codex)

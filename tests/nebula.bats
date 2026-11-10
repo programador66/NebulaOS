@@ -231,3 +231,84 @@ teardown() { teardown_nebula_env; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"o agente encerrou ao iniciar"* ]]
 }
+
+# ── rename ───────────────────────────────────────────────────
+@test "rename moves the session to the new name" {
+  "$NEBULA" claude velho "$BATS_TEST_TMPDIR"
+  run "$NEBULA" rename velho novo
+  [ "$status" -eq 0 ]
+  ! t has-session -t =velho 2>/dev/null
+  t has-session -t =novo
+  run "$NEBULA" ls
+  [[ "$output" == *"novo"*"claude"* ]]
+  [[ "$output" != *"velho"* ]]
+}
+
+@test "rename updates leader title, window name and NEBULA_SESSION" {
+  "$NEBULA" claude velho "$BATS_TEST_TMPDIR"
+  t split-window -t =velho: 'sleep 600'   # sub-agente: o líder não é o painel ativo
+  "$NEBULA" rename velho novo
+  leader=$(t show-options -t =novo: -v @nebula_leader)
+  [ "$(t display-message -p -t "$leader" '#{pane_title}')" = "líder · novo" ]
+  [ "$(t display-message -p -t "$leader" '#{window_name}')" = novo ]
+  [ "$(t show-environment -t =novo: NEBULA_SESSION)" = "NEBULA_SESSION=novo" ]
+}
+
+@test "rename keeps the layout hook working" {
+  "$NEBULA" claude velho "$BATS_TEST_TMPDIR"
+  "$NEBULA" rename velho novo
+  t split-window -h -t =novo: 'sleep 600'
+  t split-window -h -t =novo: 'sleep 600'
+  W=$(t display-message -p -t =novo: '#{window_width}')
+  run bash -c "tmux -L '$NEBULA_TMUX_SOCKET' list-panes -t =novo: -F '#{pane_top} #{pane_width}' | grep -c '^0 $W\$'"
+  [ "$output" -eq 1 ]
+}
+
+@test "rename normalizes the new name" {
+  "$NEBULA" claude velho "$BATS_TEST_TMPDIR"
+  run "$NEBULA" rename velho "novo nome"
+  [ "$status" -eq 0 ]
+  t has-session -t =novo-nome
+}
+
+@test "rename to an invalid name exits 2" {
+  "$NEBULA" claude velho "$BATS_TEST_TMPDIR"
+  run "$NEBULA" rename velho "..."
+  [ "$status" -eq 2 ]
+  t has-session -t =velho
+}
+
+@test "rename to an existing name exits 1" {
+  "$NEBULA" claude a "$BATS_TEST_TMPDIR"
+  "$NEBULA" claude b "$BATS_TEST_TMPDIR"
+  run "$NEBULA" rename a b
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sessão 'b' já existe"* ]]
+  t has-session -t =a
+}
+
+@test "rename unknown session exits 1" {
+  run "$NEBULA" rename nada novo
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sessão 'nada' não existe"* ]]
+}
+
+@test "rename without both names exits 2" {
+  run "$NEBULA" rename velho
+  [ "$status" -eq 2 ]
+}
+
+@test "help lists rename" {
+  run "$NEBULA" help
+  [[ "$output" == *"nebula rename <atual> <novo>"* ]]
+}
+
+@test "rename finds leader by title in sessions created before @nebula_leader" {
+  "$NEBULA" claude velho "$BATS_TEST_TMPDIR"
+  t set-option -u -t =velho: @nebula_leader
+  t split-window -t =velho: 'sleep 600'
+  "$NEBULA" rename velho novo
+  run bash -c "tmux -L '$NEBULA_TMUX_SOCKET' list-panes -t =novo: -F '#{pane_title}'"
+  [[ "$output" == *"líder · novo"* ]]
+  [[ "$output" != *"líder · velho"* ]]
+}

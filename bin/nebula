@@ -27,6 +27,7 @@ ${C_BOLD}${C_GREEN}nebula${C_RESET} — sessões de agentes de IA no terminal
   nebula ls                               lista as sessões
   nebula attach <nome>                    volta para uma sessão
   nebula kill <nome>                      encerra uma sessão
+  nebula rename <atual> <novo>            renomeia uma sessão
   nebula update                           atualiza o NebulaOS
   nebula help                             esta ajuda
 
@@ -117,6 +118,7 @@ cmd_open() {
         "$(leader_cmd "$agent" "$team")" \; \
       set-option -t "$t" @nebula_agent "$agent" \; \
       set-option -t "$t" @nebula_dir "$dir" \; \
+      set-option -F -t "$t" @nebula_leader '#{pane_id}' \; \
       set-option -t "$t" main-pane-height 55% \; \
       set-hook -t "$t" after-split-window "$LAYOUT_CMD" \; \
       set-hook -t "$t" after-select-layout "$LAYOUT_CMD" \; \
@@ -203,6 +205,32 @@ cmd_kill() {
   ok "sessão '$1' encerrada"
 }
 
+cmd_rename() {
+  (($# == 2)) || die_usage "uso: nebula rename <atual> <novo>"
+  local old="$1" new leader
+  require_session "$old"
+  new="$(normalize_name "$2")"
+  if tm has-session -t "=$new:" 2>/dev/null; then
+    err "sessão '$new' já existe"
+    exit 1
+  fi
+  leader="$(tm show-options -t "=$old:" -v @nebula_leader 2>/dev/null || true)"
+  if [[ -z "$leader" ]]; then
+    # sessões antigas, sem @nebula_leader: acha o líder pelo título
+    leader="$(tm list-panes -s -t "=$old:" -F '#{pane_id} #{pane_title}' \
+      | awk -v t="líder · $old" '{ id = $1; sub(/^[^ ]+ /, "") } $0 == t { print id; exit }')"
+  fi
+  tm rename-session -t "=$old:" "$new"
+  tm set-environment -t "=$new:" NEBULA_SESSION "$new"
+  if [[ -n "$leader" ]] && tm display-message -p -t "$leader" '' >/dev/null 2>&1; then
+    tm select-pane -t "$leader" -T "líder · $new"
+    if [[ "$(tm display-message -p -t "$leader" '#{window_name}')" == "$old" ]]; then
+      tm rename-window -t "$leader" "$new"
+    fi
+  fi
+  ok "sessão '$old' renomeada para '$new'"
+}
+
 cmd_update() { exec "$NEBULA_ROOT/update.sh"; }
 
 main() {
@@ -213,6 +241,7 @@ main() {
     ls) cmd_ls ;;
     attach) cmd_attach "$@" ;;
     kill) cmd_kill "$@" ;;
+    rename) cmd_rename "$@" ;;
     update) cmd_update ;;
     help|-h|--help) usage ;;
     *) die_usage "comando desconhecido: $sub" ;;

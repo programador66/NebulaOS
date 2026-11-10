@@ -51,6 +51,7 @@ cd NebulaOS
 | `nebula ls` | lista as sessões |
 | `nebula attach <nome>` | volta para uma sessão (depois de fechar a janela, por exemplo) |
 | `nebula kill <nome>` | encerra a sessão e os sub-agentes |
+| `nebula rename <atual> <novo>` | renomeia uma sessão (inclusive o título do líder e o nome da janela) |
 | `nebula update` | `git pull` + reaplica dotfiles e pós-instalação |
 
 ### Trabalhando com sub-agentes (Claude)
