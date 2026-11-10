@@ -17,9 +17,11 @@ Inspirado no [AntaresOS](https://github.com/HenriqueMachine/AntaresOS).
 
 ## Requisitos
 
-- Ubuntu 24.04 (X11)
-- [Deepin Terminal](https://github.com/linuxdeepin/deepin-terminal) 5.9+
+- Ubuntu 24.04 (X11) ou derivado
 - [Claude Code](https://claude.com/claude-code) e/ou [Codex CLI](https://github.com/openai/codex)
+
+O [Deepin Terminal](https://github.com/linuxdeepin/deepin-terminal) é instalado
+automaticamente (pacote `deepin-terminal` do Ubuntu).
 
 ## Instalação
 
@@ -33,7 +35,7 @@ cd NebulaOS
 
 | Passo | O que faz |
 |---|---|
-| `00-apt` | instala o que falta entre `zsh tmux stow git curl` (avisa antes de usar `sudo`) |
+| `00-apt` | instala o que falta entre `zsh tmux stow git curl deepin-terminal` (avisa antes de usar `sudo`) |
 | `10-binaries` | instala o [starship](https://starship.rs) em `~/.local/bin` |
 | `20-stow` | linka os dotfiles (zsh, starship, tmux) no `$HOME` e o comando `nebula` em `~/.local/bin` |
 | `30-post` | Oh My Zsh + plugins, tema **Theme8** e shell **zsh** no Deepin Terminal |
@@ -41,6 +43,8 @@ cd NebulaOS
 - Arquivos que já existirem viram `<arquivo>.nebula-bak`. Nada é sobrescrito.
 - O shell de login continua o mesmo: o zsh vale só dentro do Deepin Terminal.
 - Para aplicar só os dotfiles: `./install.sh --dotfiles`.
+- O shell zsh do Deepin é definido com o Deepin aberto. Se ele estava fechado durante a
+  instalação, o instalador avisa: abra o Deepin Terminal e rode `nebula update`.
 
 ## Uso
 

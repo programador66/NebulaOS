@@ -5,7 +5,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 step "Pacotes (apt)"
-read -r -a wanted <<<"${NEBULA_APT_PACKAGES:-zsh tmux stow git curl}"
+read -r -a wanted <<<"${NEBULA_APT_PACKAGES:-zsh tmux stow git curl deepin-terminal}"
 read -r -a apt_cmd <<<"${NEBULA_APT:-sudo apt-get install -y}"
 
 missing=()

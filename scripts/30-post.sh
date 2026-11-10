@@ -4,7 +4,7 @@ set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-DBUS_NAME=com.deepin.terminal.reborn
+DBUS_NAME="${NEBULA_DEEPIN_DBUS_NAME:-com.deepin.terminal.reborn}"
 DBUS_PATH=/window
 DBUS_IFACE=com.deepin.terminal.reborn
 
@@ -39,13 +39,14 @@ step "Deepin Terminal · tema Theme8"
 CONF="${NEBULA_DEEPIN_CONF:-$HOME/.config/deepin/deepin-terminal/config.conf}"
 if [[ -f "$CONF" ]]; then
   [[ -e "$CONF.nebula-bak" ]] || cp "$CONF" "$CONF.nebula-bak"
-  ini_set "$CONF" basic.interface.expand_theme value Theme8
-  ok "tema Theme8 definido em $CONF"
-  if pgrep -x deepin-terminal >/dev/null 2>&1; then
-    warn "o Deepin Terminal está aberto: se o tema não mudar, feche todas as janelas e reabra"
-  fi
 else
-  warn "config do Deepin Terminal não encontrada ($CONF). Abra o Deepin Terminal uma vez e rode ./install.sh de novo"
+  # Deepin nunca aberto: cria a config já com o tema
+  mkdir -p "$(dirname "$CONF")"
+fi
+ini_set "$CONF" basic.interface.expand_theme value Theme8
+ok "tema Theme8 definido em $CONF"
+if pgrep -x deepin-terminal >/dev/null 2>&1; then
+  warn "o Deepin Terminal está aberto: se o tema não mudar, feche todas as janelas e reabra"
 fi
 
 # ── Deepin Terminal: shell zsh ───────────────────────────────
@@ -58,6 +59,8 @@ if [[ "${NEBULA_SKIP_DBUS:-}" != 1 ]]; then
     current="$(busctl --user call "$DBUS_NAME" "$DBUS_PATH" "$DBUS_IFACE" consoleShell 2>/dev/null || true)"
     ok "shell do Deepin: ${current#s }"
   else
-    warn "não consegui falar com o Deepin Terminal via D-Bus. Defina manualmente: Configurações → Avançado → Shell → zsh"
+    warn "o Deepin Terminal não está aberto, então o shell zsh ainda não foi definido nele."
+    warn "Para terminar: abra o Deepin Terminal e rode: nebula update"
+    warn "(ou defina manualmente: Configurações → Avançado → Shell → zsh)"
   fi
 fi

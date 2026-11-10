@@ -85,7 +85,7 @@ points_into_stow() { [ -L "$1" ] && [[ "$(readlink -f "$1")" == "$NEBULA_ROOT/st
 }
 
 @test "apt skipped when nothing missing" {
-  NEBULA_APT='echo APT' run "$NEBULA_ROOT/scripts/00-apt.sh"
+  NEBULA_APT='echo APT' NEBULA_APT_PACKAGES='bash coreutils' run "$NEBULA_ROOT/scripts/00-apt.sh"
   [ "$status" -eq 0 ]
   [[ "$output" != *"APT"* ]]
 }
@@ -113,12 +113,14 @@ post() { NEBULA_SKIP_NET=1 NEBULA_SKIP_DBUS=1 NEBULA_DEEPIN_CONF="$CONF" run "$N
   grep -qx 'value=Theme3' "$CONF.nebula-bak"
 }
 
-@test "deepin conf missing is fine" {
-  CONF="$BATS_TEST_TMPDIR/nao-existe.conf"
+@test "deepin conf missing is created with Theme8" {
+  CONF="$BATS_TEST_TMPDIR/deepin/deepin-terminal/config.conf"
   post
   [ "$status" -eq 0 ]
-  [ ! -e "$CONF" ]
-  [[ "$output" == *"Deepin Terminal"* ]]
+  [ -f "$CONF" ]
+  run awk '/^\[basic\.interface\.expand_theme\]/{f=1;next} /^\[/{f=0} f&&/^value=/' "$CONF"
+  [ "$output" = "value=Theme8" ]
+  [ ! -e "$CONF.nebula-bak" ]
 }
 
 @test "30-post is idempotent and keeps first backup" {
@@ -144,4 +146,23 @@ post() { NEBULA_SKIP_NET=1 NEBULA_SKIP_DBUS=1 NEBULA_DEEPIN_CONF="$CONF" run "$N
     NEBULA_OMZ_URL=file:///nao/existe/install.sh run "$NEBULA_ROOT/scripts/30-post.sh"
   [ "$status" -ne 0 ]
   [[ "$output" != *"Oh My Zsh instalado"* ]]
+}
+
+
+# ── Deepin Terminal instalado e configurado pelo NebulaOS ────
+@test "apt list includes deepin-terminal by default" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/bin/dpkg-query"   # nada instalado
+  chmod +x "$BATS_TEST_TMPDIR/bin/dpkg-query"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" NEBULA_APT='echo APT' run "$NEBULA_ROOT/scripts/00-apt.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"APT zsh tmux stow git curl deepin-terminal"* ]]
+}
+
+@test "deepin not running: final notice tells how to finish" {
+  CONF="$BATS_TEST_TMPDIR/config.conf"
+  NEBULA_SKIP_NET=1 NEBULA_DEEPIN_CONF="$CONF" NEBULA_DEEPIN_DBUS_NAME=com.nebula.inexistente \
+    run "$NEBULA_ROOT/scripts/30-post.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"abra o Deepin Terminal e rode: nebula update"* ]]
 }
