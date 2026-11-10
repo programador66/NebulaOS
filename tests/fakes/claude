@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 # claude falso para testes: registra como foi chamado e fica vivo
 printf '%s args=%s teams=%s pwd=%s session=%s\n' "claude" "$*" "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" "$PWD" "${NEBULA_SESSION:-}" >> "${FAKE_LOG:?}"
+# simula conversa que não existe mais: --resume falha
+if [[ "${FAKE_RESUME_FAIL:-}" == 1 && " $* " == *" --resume "* ]]; then
+  exit 1
+fi
 exec sleep 600

@@ -80,7 +80,8 @@ teardown() { teardown_nebula_env; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"would-attach s1"* ]]
   t has-session -t =s1
-  wait_log "claude args=--teammate-mode tmux teams=1 pwd=$BATS_TEST_TMPDIR"
+  wait_log "claude args=--teammate-mode tmux --session-id "
+  wait_log "teams=1 pwd=$BATS_TEST_TMPDIR"
 }
 
 @test "claude --team 2 passes team prompt" {
@@ -311,4 +312,107 @@ teardown() { teardown_nebula_env; }
   run bash -c "tmux -L '$NEBULA_TMUX_SOCKET' list-panes -t =novo: -F '#{pane_title}'"
   [[ "$output" == *"líder · novo"* ]]
   [[ "$output" != *"líder · velho"* ]]
+}
+
+
+# ── retomar a conversa depois do reboot ──────────────────────
+state() { echo "$HOME/.local/state/nebula/$1"; }
+state_get() { sed -n "s/^$2=//p" "$(state "$1")"; }
+reboot() { t kill-server 2>/dev/null || true; : > "$FAKE_LOG"; }
+
+@test "creating a claude session saves state with a session id" {
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  [ -f "$(state s1)" ]
+  [ "$(state_get s1 agent)" = claude ]
+  [ "$(state_get s1 dir)" = "$BATS_TEST_TMPDIR" ]
+  id=$(state_get s1 claude_session)
+  [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+  wait_log "--session-id $id"
+}
+
+@test "after reboot, nebula claude resumes the conversation in the original dir" {
+  mkdir -p "$BATS_TEST_TMPDIR/outro"
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  id=$(state_get s1 claude_session)
+  reboot
+  cd "$BATS_TEST_TMPDIR/outro"
+  run "$NEBULA" claude s1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"retomando a conversa anterior de 's1'"* ]]
+  wait_log "claude args=--teammate-mode tmux --resume $id teams=1 pwd=$BATS_TEST_TMPDIR "
+  [ "$(t show-options -t =s1: -v @nebula_dir)" = "$BATS_TEST_TMPDIR" ]
+}
+
+@test "after reboot, attach also resumes" {
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  id=$(state_get s1 claude_session)
+  reboot
+  run "$NEBULA" attach s1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would-attach s1"* ]]
+  wait_log "--resume $id"
+}
+
+@test "resume with --team sends the team prompt too" {
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  reboot
+  "$NEBULA" claude s1 --team 2
+  wait_log "--resume "
+  wait_log "Crie um time de agentes com 2 sub-agentes"
+}
+
+@test "resume that fails falls back to a new conversation" {
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  old=$(state_get s1 claude_session)
+  reboot
+  FAKE_RESUME_FAIL=1 run "$NEBULA" claude s1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"começando uma nova"* ]]
+  new=$(state_get s1 claude_session)
+  [ -n "$new" ] && [ "$new" != "$old" ]
+  t has-session -t =s1
+  wait_log "--session-id $new"
+}
+
+@test "codex session does not save state" {
+  "$NEBULA" codex c1 "$BATS_TEST_TMPDIR"
+  [ ! -e "$(state c1)" ]
+}
+
+@test "ls shows stopped sessions as resumable" {
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  reboot
+  run "$NEBULA" ls
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"s1"*"claude"*"parada (retomável)"* ]]
+}
+
+@test "ls does not mark running sessions as stopped" {
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  run "$NEBULA" ls
+  [[ "$output" != *"parada"* ]]
+}
+
+@test "kill removes the state" {
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  "$NEBULA" kill s1
+  [ ! -e "$(state s1)" ]
+}
+
+@test "kill of a stopped session removes the state" {
+  "$NEBULA" claude s1 "$BATS_TEST_TMPDIR"
+  reboot
+  run "$NEBULA" kill s1
+  [ "$status" -eq 0 ]
+  [ ! -e "$(state s1)" ]
+  run "$NEBULA" ls
+  [[ "$output" == *"nenhuma sessão nebula"* ]]
+}
+
+@test "rename moves the state" {
+  "$NEBULA" claude velho "$BATS_TEST_TMPDIR"
+  id=$(state_get velho claude_session)
+  "$NEBULA" rename velho novo
+  [ ! -e "$(state velho)" ]
+  [ "$(state_get novo claude_session)" = "$id" ]
 }

@@ -48,7 +48,7 @@ cd NebulaOS
 |---|---|
 | `nebula claude <nome> [dir] [--team N]` | abre (ou retoma) a sessão `<nome>` em `dir` (padrão: o diretório atual) com o Claude como líder |
 | `nebula codex <nome> [dir]` | igual, com o Codex num painel |
-| `nebula ls` | lista as sessões |
+| `nebula ls` | lista as sessões (inclusive as paradas depois de um reboot) |
 | `nebula attach <nome>` | volta para uma sessão (depois de fechar a janela, por exemplo) |
 | `nebula kill <nome>` | encerra a sessão e os sub-agentes |
 | `nebula rename <atual> <novo>` | renomeia uma sessão (inclusive o título do líder e o nome da janela) |
@@ -64,6 +64,20 @@ O `nebula claude` liga o recurso experimental
    implementa, outro escreve testes"*. Ou já abra com `--team 2`.
 2. O Claude abre cada sub-agente num painel novo, e o NebulaOS os organiza lado a lado embaixo.
 3. Para falar direto com um sub-agente, clique no painel dele.
+
+### Depois de reiniciar o computador
+
+O tmux não sobrevive a um reboot, mas a conversa com o Claude sim. Cada sessão criada com
+`nebula claude` guarda o ID exato da conversa em `~/.local/state/nebula/<nome>`.
+
+- `nebula ls` mostra essas sessões como `parada (retomável)`.
+- `nebula claude <nome>` ou `nebula attach <nome>` recria a sessão **na pasta original**
+  e retoma a mesma conversa (`claude --resume <id>`).
+- Os sub-agentes não voltam sozinhos: peça de novo ao líder, ou use `--team N` ao retomar.
+- Se a conversa não existir mais (por exemplo, a sessão foi criada mas nunca usada), o
+  nebula avisa e começa uma nova.
+- `nebula kill <nome>` apaga esse registro. A conversa continua no histórico do Claude
+  (`claude --resume`).
 
 ### Atalhos úteis
 

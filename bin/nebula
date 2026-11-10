@@ -73,11 +73,16 @@ require_agent() {
 TEAM_PROMPT='Crie um time de agentes com N sub-agentes (teammates) para esta sessão. Não comece nenhuma tarefa: apenas crie o time e aguarde minhas instruções.'
 
 # linha de comando (sh) do painel líder
+# leader_cmd AGENT TEAM [new|resume ID]
 leader_cmd() {
-  local agent="$1" team="$2" cmd
+  local agent="$1" team="$2" mode="${3:-}" id="${4:-}" cmd
   case "$agent" in
     claude)
       cmd="CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode tmux"
+      case "$mode" in
+        new)    cmd+=" --session-id $id" ;;
+        resume) cmd+=" --resume $id" ;;
+      esac
       if ((team > 0)); then
         cmd+=" $(printf '%q' "${TEAM_PROMPT/N/$team}")"
       fi
@@ -104,29 +109,71 @@ go_to_session() {
   fi
 }
 
+# ── estado (sobrevive ao reboot; o tmux não) ─────────────────
+# ~/.local/state/nebula/<nome>: linhas agent=, dir=, claude_session=
+
+state_dir() { printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/nebula"; }
+state_file() { printf '%s/%s' "$(state_dir)" "$1"; }
+state_get() { [[ -f "$(state_file "$1")" ]] && sed -n "s/^$2=//p" "$(state_file "$1")" | head -1; }
+
+state_save() {
+  local name="$1" agent="$2" dir="$3" id="$4"
+  mkdir -p "$(state_dir)"
+  printf 'agent=%s\ndir=%s\nclaude_session=%s\n' "$agent" "$dir" "$id" > "$(state_file "$name")"
+}
+
+new_uuid() { cat /proc/sys/kernel/random/uuid; }
+
+# cria a sessão tmux; retorna 1 se o agente morreu ao iniciar
+start_session() {
+  local agent="$1" name="$2" dir="$3" cmd="$4" t="=$2:"
+  # tudo numa só chamada: se o agente morrer logo, não sobra sessão pela metade
+  tm new-session -d -s "$name" -n "$name" -c "$dir" -e "PATH=$PATH" -e "NEBULA_SESSION=$name" \
+      "$cmd" \; \
+    set-option -t "$t" @nebula_agent "$agent" \; \
+    set-option -t "$t" @nebula_dir "$dir" \; \
+    set-option -F -t "$t" @nebula_leader '#{pane_id}' \; \
+    set-option -t "$t" main-pane-height 55% \; \
+    set-hook -t "$t" after-split-window "$LAYOUT_CMD" \; \
+    set-hook -t "$t" after-select-layout "$LAYOUT_CMD" \; \
+    select-pane -t "$t" -T "líder · $name" 2>/dev/null || true
+  tm has-session -t "$t" 2>/dev/null
+}
+
+agent_died() {
+  err "o agente encerrou ao iniciar. Rode '$1' direto em $2 para ver o erro."
+  exit 1
+}
+
 cmd_open() {
-  local agent="$1" name="$2" dir="$3" team="$4" old_dir
+  local agent="$1" name="$2" dir="$3" team="$4" old_dir id
   if tm has-session -t "=$name:" 2>/dev/null; then
     old_dir="$(tm show-options -t "=$name:" -v @nebula_dir 2>/dev/null || true)"
     if [[ -n "$old_dir" && "$old_dir" != "$dir" ]]; then
       warn "aviso: a sessão '$name' já existe em $old_dir; retomando (o diretório $dir foi ignorado)" >&2
     fi
-  else
-    # tudo numa só chamada: se o agente morrer logo, não sobra sessão pela metade
-    local t="=$name:"
-    tm new-session -d -s "$name" -n "$name" -c "$dir" -e "PATH=$PATH" -e "NEBULA_SESSION=$name" \
-        "$(leader_cmd "$agent" "$team")" \; \
-      set-option -t "$t" @nebula_agent "$agent" \; \
-      set-option -t "$t" @nebula_dir "$dir" \; \
-      set-option -F -t "$t" @nebula_leader '#{pane_id}' \; \
-      set-option -t "$t" main-pane-height 55% \; \
-      set-hook -t "$t" after-split-window "$LAYOUT_CMD" \; \
-      set-hook -t "$t" after-select-layout "$LAYOUT_CMD" \; \
-      select-pane -t "$t" -T "líder · $name" 2>/dev/null || true
-    if ! tm has-session -t "$t" 2>/dev/null; then
-      err "o agente encerrou ao iniciar. Rode '$agent' direto em $dir para ver o erro."
-      exit 1
+  elif [[ "$agent" == claude && "$(state_get "$name" agent)" == claude \
+          && -n "$(state_get "$name" claude_session)" ]]; then
+    # sessão parada (reboot): retoma a conversa exata, na pasta original
+    id="$(state_get "$name" claude_session)"
+    old_dir="$(state_get "$name" dir)"
+    [[ -d "$old_dir" ]] || old_dir="$dir"
+    info "retomando a conversa anterior de '$name' em $old_dir"
+    if ! start_session claude "$name" "$old_dir" "$(leader_cmd claude "$team" resume "$id")"; then
+      warn "não encontrei a conversa anterior; começando uma nova" >&2
+      id="$(new_uuid)"
+      start_session claude "$name" "$old_dir" "$(leader_cmd claude "$team" new "$id")" \
+        || agent_died claude "$old_dir"
+      state_save "$name" claude "$old_dir" "$id"
     fi
+  elif [[ "$agent" == claude ]]; then
+    id="$(new_uuid)"
+    start_session claude "$name" "$dir" "$(leader_cmd claude "$team" new "$id")" \
+      || agent_died claude "$dir"
+    state_save "$name" claude "$dir" "$id"
+  else
+    start_session "$agent" "$name" "$dir" "$(leader_cmd "$agent" "$team")" \
+      || agent_died "$agent" "$dir"
   fi
   go_to_session "$name"
 }
@@ -190,6 +237,15 @@ cmd_ls() {
   local lines
   lines="$(tm list-sessions -F '#{session_name}	#{@nebula_agent}	#{@nebula_dir}' 2>/dev/null \
     | awk -F '\t' '$2 != ""' || true)"
+  local f name
+  if [[ -d "$(state_dir)" ]]; then
+    for f in "$(state_dir)"/*; do
+      [[ -f "$f" ]] || continue
+      name="${f##*/}"
+      tm has-session -t "=$name:" 2>/dev/null && continue
+      lines+="${lines:+$'\n'}$name	$(state_get "$name" agent)	$(state_get "$name" dir)	parada (retomável)"
+    done
+  fi
   if [[ -z "$lines" ]]; then
     echo "nenhuma sessão nebula"
     return 0
@@ -197,11 +253,28 @@ cmd_ls() {
   printf '%s\n' "$lines" | column -t -s $'\t'
 }
 
-cmd_attach() { require_session "${1:-}"; go_to_session "$1"; }
+cmd_attach() {
+  [[ -n "${1:-}" ]] || die_usage "falta o nome da sessão"
+  require_tmux
+  if ! tm has-session -t "=$1:" 2>/dev/null && [[ "$(state_get "$1" agent)" == claude ]]; then
+    require_agent claude
+    cmd_open claude "$1" "$(state_get "$1" dir)" 0
+    return
+  fi
+  require_session "$1"
+  go_to_session "$1"
+}
 
 cmd_kill() {
-  require_session "${1:-}"
+  [[ -n "${1:-}" ]] || die_usage "falta o nome da sessão"
+  if [[ -f "$(state_file "$1")" ]] && ! tm has-session -t "=$1:" 2>/dev/null; then
+    rm -f "$(state_file "$1")"
+    ok "sessão parada '$1' removida"
+    return
+  fi
+  require_session "$1"
   tm kill-session -t "=$1:"
+  rm -f "$(state_file "$1")"
   ok "sessão '$1' encerrada"
 }
 
@@ -221,6 +294,9 @@ cmd_rename() {
       | awk -v t="líder · $old" '{ id = $1; sub(/^[^ ]+ /, "") } $0 == t { print id; exit }')"
   fi
   tm rename-session -t "=$old:" "$new"
+  if [[ -f "$(state_file "$old")" ]]; then
+    mv "$(state_file "$old")" "$(state_file "$new")"
+  fi
   tm set-environment -t "=$new:" NEBULA_SESSION "$new"
   if [[ -n "$leader" ]] && tm display-message -p -t "$leader" '' >/dev/null 2>&1; then
     tm select-pane -t "$leader" -T "líder · $new"
