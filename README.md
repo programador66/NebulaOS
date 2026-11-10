@@ -53,7 +53,7 @@ cd NebulaOS
 | `nebula claude <nome> [dir] [--team N]` | abre (ou retoma) a sessão `<nome>` em `dir` (padrão: o diretório atual) com o Claude como líder |
 | `nebula codex <nome> [dir]` | igual, com o Codex num painel |
 | `nebula ls` | lista as sessões (inclusive as paradas depois de um reboot) |
-| `nebula attach <nome>` | volta para uma sessão (depois de fechar a janela, por exemplo) |
+| `nebula attach <nome> [--team N\|--sem-time]` | volta para uma sessão (depois de fechar a janela, por exemplo); depois de um reboot, as opções valem como no `nebula claude` |
 | `nebula kill <nome>` | encerra a sessão e os sub-agentes |
 | `nebula rename <atual> <novo>` | renomeia uma sessão (inclusive o título do líder e o nome da janela) |
 | `nebula update` | `git pull` + reaplica dotfiles e pós-instalação |

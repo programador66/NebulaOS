@@ -476,3 +476,34 @@ fake_teammate() {   # fake_teammate <sessão-nebula> <nome> [time]
   run "$NEBULA" claude p1 "$BATS_TEST_TMPDIR" --team 2 --sem-time
   [ "$status" -eq 2 ]
 }
+
+# ── attach aceita --team ─────────────────────────────────────
+@test "attach --team N after reboot sends the generic team prompt" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR"
+  fake_teammate p1 Zeus
+  reboot
+  run "$NEBULA" attach p1 --team 2
+  [ "$status" -eq 0 ]
+  wait_log "--resume "
+  wait_log "Crie um time de agentes com 2 sub-agentes"
+  ! grep -q "Esta sessão foi retomada" "$FAKE_LOG"
+}
+
+@test "attach --team on a running session warns it is ignored" {
+  "$NEBULA" claude p1 "$BATS_TEST_TMPDIR"
+  run "$NEBULA" attach p1 --team 2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--team ignorado"* ]]
+  [[ "$output" == *"would-attach p1"* ]]
+}
+
+@test "attach --team validates the value" {
+  run "$NEBULA" attach p1 --team 9
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--team aceita 1 a 5"* ]]
+}
+
+@test "attach with --team and --sem-time exits 2" {
+  run "$NEBULA" attach p1 --team 2 --sem-time
+  [ "$status" -eq 2 ]
+}
