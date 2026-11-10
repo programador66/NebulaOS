@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# claude falso para testes: registra como foi chamado e fica vivo
+printf '%s args=%s teams=%s pwd=%s session=%s\n' "claude" "$*" "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" "$PWD" "${NEBULA_SESSION:-}" >> "${FAKE_LOG:?}"
+exec sleep 600

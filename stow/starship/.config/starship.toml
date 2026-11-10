@@ -1,0 +1,22 @@
+# NebulaOS · starship — verde do Theme8 do Deepin
+add_newline = false
+format = "$env_var$directory$git_branch$git_status$character"
+
+[directory]
+style = "bold #00cd00"
+truncation_length = 3
+
+[git_branch]
+style = "#00cd00"
+format = "[$symbol$branch]($style) "
+
+[git_status]
+style = "#00cd00"
+
+[character]
+success_symbol = "[❯](bold #00cd00)"
+error_symbol = "[❯](bold red)"
+
+[env_var.NEBULA_SESSION]
+format = "[⟨$env_value⟩ ]($style)"
+style = "#00cd00"

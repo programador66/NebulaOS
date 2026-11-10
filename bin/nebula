@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# NebulaOS · nebula — sessões de agentes de IA (Claude Code / Codex) em tmux
+set -euo pipefail
+
+NEBULA_ROOT="${NEBULA_ROOT:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
+export NEBULA_ROOT
+# shellcheck source=../scripts/lib.sh
+source "$NEBULA_ROOT/scripts/lib.sh"
+
+# ── utilitários ──────────────────────────────────────────────
+
+# tmux respeitando o socket isolado dos testes
+tm() {
+  if [[ -n "${NEBULA_TMUX_SOCKET:-}" ]]; then
+    tmux -L "$NEBULA_TMUX_SOCKET" "$@"
+  else
+    tmux "$@"
+  fi
+}
+
+usage() {
+  cat <<EOF
+${C_BOLD}${C_GREEN}nebula${C_RESET} — sessões de agentes de IA no terminal
+
+  nebula claude <nome> [dir] [--team N]   Claude como líder; sub-agentes em painéis
+  nebula codex <nome> [dir]               Codex num painel (sub-agentes internos)
+  nebula ls                               lista as sessões
+  nebula attach <nome>                    volta para uma sessão
+  nebula kill <nome>                      encerra uma sessão
+  nebula update                           atualiza o NebulaOS
+  nebula help                             esta ajuda
+
+  dir:       diretório do projeto (padrão: o atual)
+  --team N:  pede ao Claude para já criar N sub-agentes (1 a 5)
+EOF
+}
+
+die_usage() { err "$1"; usage; exit 2; }
+
+# só letras, números, '_' e '-': o resto vira '-' (o nome entra em comandos do tmux)
+normalize_name() {
+  local raw="$1" name
+  name="$(printf '%s' "$raw" | LC_ALL=C sed -E 's/[^A-Za-z0-9_-]+/-/g')"
+  if [[ ! "$name" =~ [A-Za-z0-9] ]]; then
+    die_usage "nome de sessão inválido: '$raw' (use letras, números, '_' ou '-')"
+  fi
+  if [[ "$name" != "$raw" ]]; then
+    warn "nome ajustado para '$name'" >&2
+  fi
+  printf '%s' "$name"
+}
+
+require_cmd() {
+  local cmd="$1" hint="$2"
+  if ! have "$cmd"; then
+    err "$cmd não encontrado. $hint"
+    exit 1
+  fi
+}
+
+require_tmux() { require_cmd tmux "Instale com: sudo apt install tmux"; }
+
+require_agent() {
+  case "$1" in
+    claude) require_cmd claude "Instale com: curl -fsSL https://claude.ai/install.sh | bash" ;;
+    codex)  require_cmd codex  "Instale com: npm install -g @openai/codex" ;;
+  esac
+}
+
+# ── abrir sessão ─────────────────────────────────────────────
+
+TEAM_PROMPT='Crie um time de agentes com N sub-agentes (teammates) para esta sessão. Não comece nenhuma tarefa: apenas crie o time e aguarde minhas instruções.'
+
+# linha de comando (sh) do painel líder
+leader_cmd() {
+  local agent="$1" team="$2" cmd
+  case "$agent" in
+    claude)
+      cmd="CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 claude --teammate-mode tmux"
+      if ((team > 0)); then
+        cmd+=" $(printf '%q' "${TEAM_PROMPT/N/$team}")"
+      fi
+      ;;
+    codex) cmd="codex" ;;
+  esac
+  printf '%s' "$cmd"
+}
+
+# Mantém o líder em cima e os sub-agentes lado a lado embaixo, só nesta sessão.
+# O Claude Code aplica o próprio layout (main-vertical) depois de abrir sub-agentes,
+# então o hook também reage a select-layout. Sem -t: vale a janela do próprio evento.
+# (tmux não re-dispara hooks para comandos executados por um hook: sem recursão.)
+LAYOUT_CMD="select-layout main-horizontal"
+
+go_to_session() {
+  local name="$1"
+  if [[ -n "${TMUX:-}" ]]; then
+    if [[ "${NEBULA_NO_ATTACH:-}" == 1 ]]; then echo "would-switch $name"; return; fi
+    tm switch-client -t "=$name:"
+  else
+    if [[ "${NEBULA_NO_ATTACH:-}" == 1 ]]; then echo "would-attach $name"; return; fi
+    tm attach-session -t "=$name:"
+  fi
+}
+
+cmd_open() {
+  local agent="$1" name="$2" dir="$3" team="$4" old_dir
+  if tm has-session -t "=$name:" 2>/dev/null; then
+    old_dir="$(tm show-options -t "=$name:" -v @nebula_dir 2>/dev/null || true)"
+    if [[ -n "$old_dir" && "$old_dir" != "$dir" ]]; then
+      warn "aviso: a sessão '$name' já existe em $old_dir; retomando (o diretório $dir foi ignorado)" >&2
+    fi
+  else
+    # tudo numa só chamada: se o agente morrer logo, não sobra sessão pela metade
+    local t="=$name:"
+    tm new-session -d -s "$name" -n "$name" -c "$dir" -e "PATH=$PATH" -e "NEBULA_SESSION=$name" \
+        "$(leader_cmd "$agent" "$team")" \; \
+      set-option -t "$t" @nebula_agent "$agent" \; \
+      set-option -t "$t" @nebula_dir "$dir" \; \
+      set-option -t "$t" main-pane-height 55% \; \
+      set-hook -t "$t" after-split-window "$LAYOUT_CMD" \; \
+      set-hook -t "$t" after-select-layout "$LAYOUT_CMD" \; \
+      select-pane -t "$t" -T "líder · $name" 2>/dev/null || true
+    if ! tm has-session -t "$t" 2>/dev/null; then
+      err "o agente encerrou ao iniciar. Rode '$agent' direto em $dir para ver o erro."
+      exit 1
+    fi
+  fi
+  go_to_session "$name"
+}
+
+# nebula claude|codex <nome> [dir] [--team N]
+parse_open() {
+  local agent="$1"; shift
+  local name="" dir="" team=0 have_team=0
+
+  while (($#)); do
+    case "$1" in
+      --team)
+        (($# >= 2)) || die_usage "--team precisa de um valor"
+        have_team=1; team="$2"; shift 2 ;;
+      --team=*)
+        have_team=1; team="${1#--team=}"; shift ;;
+      -*)
+        die_usage "opção desconhecida: $1" ;;
+      *)
+        if [[ -z "$name" ]]; then name="$1"
+        elif [[ -z "$dir" ]]; then dir="$1"
+        else die_usage "argumento a mais: $1"
+        fi
+        shift ;;
+    esac
+  done
+
+  [[ -n "$name" ]] || die_usage "falta o nome da sessão"
+  if ((have_team)); then
+    [[ "$agent" == claude ]] || die_usage "--team só vale para claude"
+    [[ "$team" =~ ^[1-5]$ ]] || die_usage "--team aceita 1 a 5"
+  fi
+
+  require_tmux
+  require_agent "$agent"
+
+  dir="${dir:-$PWD}"
+  if [[ ! -d "$dir" ]]; then
+    err "diretório não existe: $dir"
+    exit 1
+  fi
+  dir="$(cd "$dir" && pwd)"
+
+  name="$(normalize_name "$name")"
+  cmd_open "$agent" "$name" "$dir" "$team"
+}
+
+# ── ls / attach / kill / update ──────────────────────────────
+
+require_session() {
+  [[ -n "${1:-}" ]] || die_usage "falta o nome da sessão"
+  require_tmux
+  if ! tm has-session -t "=$1:" 2>/dev/null; then
+    err "sessão '$1' não existe"
+    exit 1
+  fi
+}
+
+cmd_ls() {
+  require_tmux
+  local lines
+  lines="$(tm list-sessions -F '#{session_name}	#{@nebula_agent}	#{@nebula_dir}' 2>/dev/null \
+    | awk -F '\t' '$2 != ""' || true)"
+  if [[ -z "$lines" ]]; then
+    echo "nenhuma sessão nebula"
+    return 0
+  fi
+  printf '%s\n' "$lines" | column -t -s $'\t'
+}
+
+cmd_attach() { require_session "${1:-}"; go_to_session "$1"; }
+
+cmd_kill() {
+  require_session "${1:-}"
+  tm kill-session -t "=$1:"
+  ok "sessão '$1' encerrada"
+}
+
+cmd_update() { exec "$NEBULA_ROOT/update.sh"; }
+
+main() {
+  local sub="${1:-help}"
+  (($#)) && shift
+  case "$sub" in
+    claude|codex) parse_open "$sub" "$@" ;;
+    ls) cmd_ls ;;
+    attach) cmd_attach "$@" ;;
+    kill) cmd_kill "$@" ;;
+    update) cmd_update ;;
+    help|-h|--help) usage ;;
+    *) die_usage "comando desconhecido: $sub" ;;
+  esac
+}
+
+main "$@"

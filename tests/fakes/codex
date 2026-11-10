@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# codex falso para testes: registra como foi chamado e fica vivo
+printf '%s args=%s teams=%s pwd=%s session=%s\n' "codex" "$*" "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" "$PWD" "${NEBULA_SESSION:-}" >> "${FAKE_LOG:?}"
+exec sleep 600
